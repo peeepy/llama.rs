@@ -44,9 +44,6 @@ impl LlamaModel {
         let config = LlamaConfig::from_file(&files.config)?;
         let llama_model = Self::load_from_file(&files.model, config)?;
 
-        // Initialize tokenizer using the same directory
-        let tokenizer = LlamaTokenizer::new(dir)?;  // Use the same path
-
         // Return the LlamaModel instance (no tokenizer inside LlamaModel struct)
         Ok(llama_model)
     }
