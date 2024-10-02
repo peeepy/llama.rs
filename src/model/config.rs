@@ -45,6 +45,14 @@ pub struct RopeScaling {
     pub rope_type: String,
 }
 
+impl ModelConfig for LlamaConfig {
+    fn from_file(path: &Path) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let config_str = std::fs::read_to_string(path)?;
+        let config: LlamaConfig = serde_json::from_str(&config_str)?;
+        Ok(config)
+    }
+}
+
 mod torch_dtype_serde {
     use serde::{Deserialize, Deserializer, Serializer};
     use tch::Kind;
@@ -73,13 +81,5 @@ mod torch_dtype_serde {
             "float64" => Ok(Kind::Double),
             _ => Err(serde::de::Error::custom("Unsupported torch dtype")),
         }
-    }
-}
-
-impl ModelConfig for LlamaConfig {
-    fn from_file(path: &Path) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let config_str = std::fs::read_to_string(path)?;
-        let config: LlamaConfig = serde_json::from_str(&config_str)?;
-        Ok(config)
     }
 }
