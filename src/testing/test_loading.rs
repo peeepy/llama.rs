@@ -11,10 +11,8 @@ pub fn test_load_model() -> Result<(), Box<dyn Error + Send + Sync>> {
     let model = LlamaModel::load_from_directory(model_dir)?;
     let load_time = start_time.elapsed();
     println!("Model loaded successfully in {:?}", load_time);
-    // You can add more detailed prints here if needed
-    println!("Model config: {:?}", model.config);
-    // println!("Number of tensors: {}", model.tensors.len());
 
+    println!("Model config: {:?}", model.config);
     // Check tensor information
     for (name, tensor) in model.tensors {
         println!("Tensor shape: {:?} - Quantization: {:?}", tensor.original_shape, tensor.quant_type);
