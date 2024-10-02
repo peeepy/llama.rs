@@ -4,6 +4,7 @@ use std::error::Error;
 use std::path::Path;
 use std::marker::PhantomData;
 
+// Generic model loader to futureproof different model support
 pub struct ModelLoader<M: Model> {
     _phantom: PhantomData<M>,
 }
@@ -21,5 +22,5 @@ impl<M: Model> ModelLoader<M> {
     }
 }
 
-// Example usage for LlamaModel
+// Alias for easy loading of Llama models
 pub type LlamaLoader = ModelLoader<LlamaModel>;
