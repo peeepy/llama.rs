@@ -11,10 +11,15 @@ pub struct ModelFiles {
     pub generation_config: Option<PathBuf>,
 }
 
+enum FileType {
+    Model,
+    Config,
+}
+
 impl ModelFiles {
     pub fn from_directory<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let dir = dir.as_ref();
-
+        
         let model = Self::find_model_file(dir)
             .context("Model file not found")?;
         let config = Self::find_file(dir, &["config.json"])

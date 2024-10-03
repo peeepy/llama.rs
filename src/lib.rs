@@ -1,10 +1,6 @@
-pub mod inference {
-    pub mod engine;
-}
+pub mod inference;
 
-pub mod loading {
-    pub mod loader;
-}
+pub mod loader;
 
 pub mod model {
     pub mod files;
@@ -12,17 +8,11 @@ pub mod model {
     pub mod model;
 }
 
-pub mod quantization {
-    pub mod quantized_weights;
-}
+pub mod quantize_tensors;
 
-pub mod sampling {
-    pub mod sampler;
-}
+pub mod sampler;
 
-pub mod tokenizer {
-    pub mod tokenizer;
-}
+pub mod tokenizer;
 
 pub mod helpers;
 

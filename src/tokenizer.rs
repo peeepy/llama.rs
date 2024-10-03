@@ -35,12 +35,12 @@ impl TokenizerConfig {
     }
 }
 
-pub struct LlamaTokenizer {
+pub struct Tokenizer {
     tokenizer: Tokenizer,
     config: TokenizerConfig,
 }
 
-impl LlamaTokenizer {
+impl Tokenizer {
     pub fn new<P: AsRef<Path>>(model_dir: P) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let config = TokenizerConfig::from_directory(model_dir)
             .map_err(|e| Box::<dyn Error + Send + Sync>::from(e))?;
@@ -71,13 +71,13 @@ impl LlamaTokenizer {
     }
 
     pub fn encode(&self, text: &str) -> Result<Vec<u32>, Box<dyn Error + Send + Sync>> {
-        let encoding = self.tokenizer.encode(text, false)
+        let encoding = self.tokenizer.encode(text)
             .map_err(|e| Box::<dyn Error + Send + Sync>::from(format!("Failed to encode text: {:?}", e)))?;
         Ok(encoding.get_ids().to_vec())
     }
 
     pub fn decode(&self, token_ids: &[u32]) -> Result<String, Box<dyn Error + Send + Sync>> {
-        self.tokenizer.decode(token_ids, false)
+        self.tokenizer.decode(token_ids)
             .map_err(|e| Box::<dyn Error + Send + Sync>::from(format!("Failed to decode tokens: {:?}", e)))
     }
 

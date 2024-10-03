@@ -1,6 +1,6 @@
-use crate::model::config::LlamaConfig;
+use crate::model::config::Config;
 use crate::model::files::ModelFiles;
-use crate::tokenizer::tokenizer::LlamaTokenizer;
+use crate::tokenizer::tokenizer::Tokenizer;
 use crate::quantization::quantized_weights::{QuantizedTensor, QuantType, TensorData};
 use safetensors::{SafeTensors, tensor::TensorView};
 use std::collections::HashMap;
@@ -12,43 +12,18 @@ use std::sync::Arc;
 use tch::{Tensor, Kind, Device};
 use rayon::prelude::*;
 
-pub trait ModelConfig: Sized + Send + Sync {
-    fn from_file(path: &Path) -> Result<Self, Box<dyn Error + Send + Sync>>;
-}
-
-pub trait Model: Sized {
-    type Config: ModelConfig;
-
-    fn load_from_file(model_path: &Path, config: Self::Config) -> Result<Self, Box<dyn Error + Send + Sync>>;
-}
-
-pub struct LlamaModel {
-    pub config: LlamaConfig,
+pub struct Model {
+    pub config: Config,
     pub tensors: HashMap<String, QuantizedTensor>,
 }
 
-impl LlamaModel {
-    pub fn new(config: LlamaConfig) -> Self {
+impl Model {
+    pub fn new(config: Config) -> Self {
         Self {
             config,
             tensors: HashMap::new(),
         }
     }
-
-    pub fn load_from_directory<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let dir = dir.as_ref();  // Convert to &Path
-
-        let files = ModelFiles::from_directory(dir)?; // Use the same path
-
-        // Load the config and model from files
-        let config = LlamaConfig::from_file(&files.config)?;
-        let llama_model = Self::load_from_file(&files.model, config)?;
-
-        // Return the LlamaModel instance (no tokenizer inside LlamaModel struct)
-        Ok(llama_model)
-    }
-
-
 
     pub fn quantize(&mut self, quant_type: QuantType, group_size: usize) {
         for (_, tensor) in self.tensors.iter_mut() {
@@ -58,7 +33,7 @@ impl LlamaModel {
         }
     }
 
-    pub fn from_safetensors(st: &SafeTensors, config: LlamaConfig) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub fn from_safetensors(st: &SafeTensors, config: Config) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let tensors: HashMap<String, QuantizedTensor> = st.names()
             .par_iter()
             .map(|name| {
@@ -103,18 +78,5 @@ impl LlamaModel {
         };
 
         Ok(tensor.reshape(&shape))
-    }
-}
-
-impl Model for LlamaModel {
-    type Config = LlamaConfig;
-
-    fn load_from_file(model_path: &Path, config: LlamaConfig) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let mut file = File::open(model_path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        let safetensors = SafeTensors::deserialize(&buffer)?;
-
-        Self::from_safetensors(&safetensors, config)
     }
 }
