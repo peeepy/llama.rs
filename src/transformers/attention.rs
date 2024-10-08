@@ -1,7 +1,6 @@
 use crate::utils::softmax;
 use std::error::Error;
 use tch::Tensor;
-use safetensors::SafeTensors;
 use std::sync::Arc;
 
 pub struct Attention {
@@ -92,24 +91,4 @@ impl Attention {
         Ok(Arc::new(final_output_tensor))  // Wrap the result in Arc<Tensor>
     }
 
-    pub fn from_safetensors(
-        st: &SafeTensors,
-        layer_index: usize,
-    ) -> Result<Self, Box<dyn Error>> {
-        // Load the tensors (wq, wk, wv, wo) for attention
-        // Tensor doesn't have from_safetensors. Needs its own method
-        let wq = Arc::new(Tensor::from_safetensors(st, format!("wq_{}", layer_index))?);
-        let wk = Arc::new(Tensor::from_safetensors(st, format!("wk_{}", layer_index))?);
-        let wv = Arc::new(Tensor::from_safetensors(st, format!("wv_{}", layer_index))?);
-        let wo = Arc::new(Tensor::from_safetensors(st, format!("wo_{}", layer_index))?);
-        
-        Ok(Attention {
-            wq,
-            wk,
-            wv,
-            wo,
-            head_dim: 64, // Example head dimension
-            num_heads: 8, // Example number of heads
-        })
-    }
 }

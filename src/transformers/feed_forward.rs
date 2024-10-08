@@ -2,7 +2,6 @@ use std::error::Error;
 use tch::Tensor;
 use crate::utils::{gelu, matmul};
 use tch::IndexOp;
-use safetensors::SafeTensors;
 use std::sync::Arc;
 
 pub struct FeedForward {
@@ -47,30 +46,8 @@ impl FeedForward {
         }
 
         // Perform the final linear transformation
-        let final_output = matmul(&intermediate, &self.w2)?;  // matmul returns Tensor
+        let final_output = matmul(&Arc::new(intermediate), &self.w2)?;  // matmul returns Tensor
 
-        Ok(Arc::new(final_output))  // Wrap final_output in Arc<Tensor>
-    }
-
-    pub fn from_safetensors(
-        st: &SafeTensors,
-        layer_index: usize,
-    ) -> Result<Self, Box<dyn Error>> {
-        // these are not Tensor methods. Needs its own method.
-        let w1 = Arc::new(Tensor::from_safetensors(st, format!("w1_{}", layer_index))?);
-        let w2 = Arc::new(Tensor::from_safetensors(st, format!("w2_{}", layer_index))?);
-        let w3 = Arc::new(Tensor::from_safetensors(st, format!("w3_{}", layer_index))?);
-        
-        // Derive dim and hidden_dim from tensor shapes
-        let dim = w1.size()[1] as usize;
-        let hidden_dim = w1.size()[0] as usize;
-
-        Ok(FeedForward {
-            w1,
-            w2,
-            w3,
-            dim,
-            hidden_dim,
-        })
+        Ok(final_output)  // Wrap final_output in Arc<Tensor>
     }
 }

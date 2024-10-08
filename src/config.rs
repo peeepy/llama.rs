@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
 use tch::Kind;
+use std::fs::File;
+use std::error::Error;
+use glob::glob;
+use std::io::Read;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -35,6 +40,29 @@ pub struct Config {
 impl Config {
     pub fn get_head_dim(&self) -> usize {
         (self.hidden_size / self.num_attention_heads) as usize
+    }
+
+    pub fn load_config<P: AsRef<Path>>(
+        dir: P,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let dir = dir.as_ref();
+
+        // Find the config.json file in the directory
+        let config_file_pattern = format!("{}/{}", dir.display(), "config.json");
+        let config_path = glob(&config_file_pattern)?
+            .filter_map(Result::ok)
+            .next()
+            .ok_or("No config.json file found")?;
+
+        // Open and read the config.json file
+        let mut config_file = File::open(config_path)?;
+        let mut buffer = String::new();
+        config_file.read_to_string(&mut buffer)?;
+
+        // Deserialize the JSON content into the Config struct
+        let config: Config = serde_json::from_str(&buffer)?;
+
+        Ok(config)
     }
 }
 

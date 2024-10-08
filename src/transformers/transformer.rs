@@ -12,9 +12,9 @@ use glob::glob;
 use std::sync::Arc;
 
 pub struct Transformer {
-    config: Config,
-    token_embedding_table: Arc<Tensor>,
-    blocks: Vec<TransformerBlock>,
+    pub config: Config,
+    pub token_embedding_table: Arc<Tensor>,
+    pub blocks: Vec<TransformerBlock>,
 }
 
 impl Transformer {
@@ -69,7 +69,7 @@ impl Transformer {
         let dir = dir.as_ref();
 
         // Load config.json for model configuration
-        let config = load_config(dir.join("config.json"))?;
+        let config: Config = Config::load_config(dir)?;
 
         // Find and load the SafeTensors file
         let model_file = format!("{}/{}", dir.display(), "*.safetensors");
@@ -84,11 +84,11 @@ impl Transformer {
         let safetensors = SafeTensors::deserialize(&buffer)?;
 
         // Load the token embedding table
-        let token_embedding_table = load_tensor(&safetensors, "token_embedding_table")?;
+        let token_embedding_table = load_tensor(&safetensors, "model.embed_tokens.weight")?;
 
         // Load transformer blocks
-        let mut blocks = Vec::with_capacity(config.n_layers);
-        for i in 0..config.n_layers {
+        let mut blocks = Vec::with_capacity(config.num_hidden_layers);
+        for i in 0..config.num_hidden_layers {
             let block = TransformerBlock::from_safetensors(&safetensors, config.clone(), i)?;
             blocks.push(block);
         }

@@ -38,37 +38,38 @@ impl TransformerBlock {
         config: Config,
         layer_index: usize,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Load attention components
-        let wq = load_tensor(st, &format!("layers.{}.attention.wq.weight", layer_index))?;
-        let wk = load_tensor(st, &format!("layers.{}.attention.wk.weight", layer_index))?;
-        let wv = load_tensor(st, &format!("layers.{}.attention.wv.weight", layer_index))?;
-        let wo = load_tensor(st, &format!("layers.{}.attention.wo.weight", layer_index))?;
+      // Load attention components
+let wq = load_tensor(st, &format!("model.layers.{}.self_attn.q_proj.weight", layer_index))?;
+let wk = load_tensor(st, &format!("model.layers.{}.self_attn.k_proj.weight", layer_index))?;
+let wv = load_tensor(st, &format!("model.layers.{}.self_attn.v_proj.weight", layer_index))?;
+let wo = load_tensor(st, &format!("model.layers.{}.self_attn.o_proj.weight", layer_index))?;
 
-        let attention = Attention::new(
-            Arc::clone(&wq),
-            Arc::clone(&wk),
-            Arc::clone(&wv),
-            Arc::clone(&wo),
-            config.get_head_dim(),
-            config.num_attention_heads,
-        );
+let attention = Attention::new(
+    Arc::clone(&wq),
+    Arc::clone(&wk),
+    Arc::clone(&wv),
+    Arc::clone(&wo),
+    config.get_head_dim(),
+    config.num_attention_heads,
+);
 
-        // Load feed-forward components
-        let w1 = load_tensor(st, &format!("layers.{}.feed_forward.w1.weight", layer_index))?;
-        let w2 = load_tensor(st, &format!("layers.{}.feed_forward.w2.weight", layer_index))?;
-        let w3 = load_tensor(st, &format!("layers.{}.feed_forward.w3.weight", layer_index))?;
+// Load feed-forward components
+let w1 = load_tensor(st, &format!("model.layers.{}.mlp.gate_proj.weight", layer_index))?;
+let w2 = load_tensor(st, &format!("model.layers.{}.mlp.down_proj.weight", layer_index))?;
+let w3 = load_tensor(st, &format!("model.layers.{}.mlp.up_proj.weight", layer_index))?;
 
-        let feed_forward = FeedForward::new(
-            Arc::clone(&w1),
-            Arc::clone(&w2),
-            Arc::clone(&w3),
-            config.get_head_dim(),
-            config.intermediate_size,
-        );
+let feed_forward = FeedForward::new(
+    Arc::clone(&w1),
+    Arc::clone(&w2),
+    Arc::clone(&w3),
+    config.get_head_dim(),
+    config.intermediate_size,
+);
 
-        // Load normalization weights
-        let norm1_weight = load_tensor(st, &format!("layers.{}.attention_norm.weight", layer_index))?;
-        let norm2_weight = load_tensor(st, &format!("layers.{}.ffn_norm.weight", layer_index))?;
+// Load normalization weights
+let norm1_weight = load_tensor(st, &format!("model.layers.{}.input_layernorm.weight", layer_index))?;
+let norm2_weight = load_tensor(st, &format!("model.layers.{}.post_attention_layernorm.weight", layer_index))?;
+
 
         Ok(Self::new(
             attention,
@@ -114,8 +115,8 @@ impl TransformerBlock {
             pos,
         )?;
 
-        // Convert attention_output (Tensor) to Vec<f32> for residual connection
-        let attention_output_vec: Vec<f32> = Vec::<f32>::try_from(attention_output)?;
+       // Convert attention_output (Arc<Tensor>) to Vec<f32> for residual connection
+        let attention_output_vec: Vec<f32> = Vec::<f32>::try_from(&*attention_output)?;
 
         // Residual connection
         let mut residual_output = vec![0.0; dim];
@@ -140,7 +141,7 @@ impl TransformerBlock {
         let final_output_tensor = self.feed_forward.forward(Arc::new(normed_residual_tensor))?;
 
         // Convert final_output (Tensor) to Vec<f32> for final residual connection
-        let final_output_vec: Vec<f32> = Vec::<f32>::try_from(final_output_tensor)?;
+        let final_output_vec: Vec<f32> = Vec::<f32>::try_from(&*final_output_tensor)?;
 
         // Residual connection after feed-forward
         let mut output = vec![0.0; dim];

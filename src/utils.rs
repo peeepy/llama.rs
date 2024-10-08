@@ -1,6 +1,10 @@
 use tch::{Tensor, Kind};
 use std::error::Error;
 use safetensors::tensor::TensorView;
+use std::sync::Arc;
+use std::fs::File;
+use std::io::Read;
+use safetensors::SafeTensors;
 
 
 // fn get_embeddings(&self, tokens: &[usize]) -> Vec<f32> {
@@ -65,28 +69,57 @@ pub fn softmax(x: &mut [f32]){
     }
 }
 
-pub fn matmul(a: &Tensor, b: &Tensor) -> Result<Tensor, Box<dyn Error>> {
-    let a_dims = a.size();
-    let b_dims = b.size();
-    
-    if a_dims[1] != b_dims[0] {
+pub fn matmul(a: &Arc<Tensor>, b: &Arc<Tensor>) -> Result<Arc<Tensor>, Box<dyn Error>> {
+    if a.size()[1] != b.size()[0] {
         return Err("Invalid dimensions for matrix multiplication".into());
     }
+    
+    let result = a.matmul(b);
+    
+    Ok(Arc::new(result))
+}
 
-    let mut result = Tensor::zeros(&[a_dims[0], b_dims[1]], (tch::Kind::Float, a.device()));
+pub fn list_tensors_in_safetensors(file_path: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    // Open the SafeTensors file
+    let mut safetensor_file = File::open(file_path)?;
+    let mut buffer = Vec::new();
+    safetensor_file.read_to_end(&mut buffer)?;
 
-    for i in 0..a_dims[0] {
-        for j in 0..b_dims[1] {
-            let mut sum = 0.0;
-            for k in 0..a_dims[1] {
-                sum += (a.double_value(&[i, k]) * b.double_value(&[k, j])) as f32;
-            }
-            result.get(i).get(j).fill_(sum);
-        }
+    // Deserialize the SafeTensors data
+    let safetensors = SafeTensors::deserialize(&buffer)?;
+
+    // Iterate through the tensor names
+    for (name, tensor) in safetensors.tensors() {
+        println!("Tensor Name: {}", name);
+        println!("Shape: {:?}", tensor.shape());
     }
 
-    Ok(result)
+    Ok(())
 }
+
+// pub fn matmul(a: &Arc<Tensor>, b: &Arc<Tensor>) -> Result<Arc<Tensor>, Box<dyn Error>> {
+//     let a_dims = a.size();
+//     let b_dims = b.size();
+    
+//     if a_dims[1] != b_dims[0] {
+//         return Err("Invalid dimensions for matrix multiplication".into());
+//     }
+
+//     let mut result = Tensor::zeros(&[a_dims[0], b_dims[1]], (tch::Kind::Float, a.device()));
+
+//     for i in 0..a_dims[0] {
+//         for j in 0..b_dims[1] {
+//             let mut sum = 0.0;
+//             for k in 0..a_dims[1] {
+//                 sum += (a.double_value(&[i, k]) * b.double_value(&[k, j])) as f32;
+//             }
+//             // Use index_put_ to directly set the value at (i, j)
+//             result.index_put_(&[i.into(), j.into()], &Tensor::from(sum));
+//         }
+//     }
+
+//     Ok(Arc::new(result))
+// }
 
 pub fn gelu(x: f32) -> f32 {
     // Approximation of GELU
