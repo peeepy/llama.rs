@@ -1,16 +1,14 @@
 use crate::config::Config;
-use crate::quantization::ModelTensor;
 use crate::transformers::attention::Attention;
 use crate::transformers::feed_forward::FeedForward;
 use crate::transformers::rmsnorm::rmsnorm;
 use crate::utils;
-use rayon::iter::IntoParallelRefIterator;
-use safetensors::tensor::SafeTensors;
-use std::collections::HashMap;
 use std::error::Error;
-use rayon::iter::ParallelIterator;
+use safetensors::SafeTensors;
+use tch::Tensor;
+use std::sync::Arc;
 
-pub struct TransformerBlock{
+pub struct TransformerBlock {
     pub attention: Attention,
     pub feed_forward: FeedForward,
     pub norm1_weight: Vec<f32>,
@@ -47,14 +45,12 @@ impl TransformerBlock {
         let wo = load_tensor(st, &format!("layers.{}.attention.wo.weight", layer_index))?;
 
         let attention = Attention::new(
-            wq,
-            wk,
-            wv,
-            wo,
-            config.quant_type(),
-            config.group_size,
-            config.dim / config.num_heads,
-            config.num_heads,
+            Arc::clone(&wq),
+            Arc::clone(&wk),
+            Arc::clone(&wv),
+            Arc::clone(&wo),
+            config.get_head_dim(),
+            config.num_attention_heads,
         );
 
         // Load feed-forward components
@@ -63,13 +59,11 @@ impl TransformerBlock {
         let w3 = load_tensor(st, &format!("layers.{}.feed_forward.w3.weight", layer_index))?;
 
         let feed_forward = FeedForward::new(
-            w1,
-            w2,
-            w3,
-            config.quant_type(),
-            config.group_size,
-            config.dim,
-            config.hidden_dim,
+            Arc::clone(&w1),
+            Arc::clone(&w2),
+            Arc::clone(&w3),
+            config.get_head_dim(),
+            config.intermediate_size,
         );
 
         // Load normalization weights
@@ -79,45 +73,54 @@ impl TransformerBlock {
         Ok(Self::new(
             attention,
             feed_forward,
-            norm1_weight.flatten(0, -1).into(),
-            norm2_weight.flatten(0, -1).into(),
+            Vec::<f32>::try_from(norm1_weight.flatten(0, -1))?,
+            Vec::<f32>::try_from(norm2_weight.flatten(0, -1))?,
             config.rms_norm_eps,
         ))
     }
 
     pub fn forward(
         &self,
-        input: &ModelTensor,
-        key_cache: &mut [f32],
-        value_cache: &mut [f32],
+        input: &Tensor,
+        key_cache: &mut Vec<f32>,
+        value_cache: &mut Vec<f32>,
         seq_len: usize,
         pos: usize,
-    ) -> Result<Vec<f32>, Box<dyn Error>> {
-        let dim = input.data.len();
+    ) -> Result<Tensor, Box<dyn Error>> {
+        let dim = input.size1()? as usize;
+
+        // Convert input tensor to Vec<f32>
+        let input_data: Vec<f32> = Vec::<f32>::try_from(input)?;
 
         // Layer normalization before attention
         let mut normed_input = vec![0.0; dim];
         rmsnorm(
             &mut normed_input,
-            &input.data,
+            &input_data,  // passing Vec<f32> reference
             &self.norm1_weight,
             dim,
             self.epsilon,
         );
 
-        // Attention mechanism
+        // Convert normed_input (Vec<f32>) to Tensor
+        let normed_input_tensor = Tensor::from_slice(&normed_input);
+
+        // Attention mechanism with Tensor
         let attention_output = self.attention.forward(
-            &ModelTensor::new(&normed_input),
+            Arc::new(normed_input_tensor),
             key_cache,
             value_cache,
             seq_len,
             pos,
         )?;
 
+        // Convert attention_output (Tensor) to Vec<f32> for residual connection
+        let attention_output_vec: Vec<f32> = Vec::<f32>::try_from(attention_output)?;
+
         // Residual connection
         let mut residual_output = vec![0.0; dim];
         for i in 0..dim {
-            residual_output[i] = input.data[i] + attention_output[i];
+            residual_output[i] = input_data[i] + attention_output_vec[i]; // input_data from earlier conversion
         }
 
         // Layer normalization before feed-forward
@@ -130,22 +133,39 @@ impl TransformerBlock {
             self.epsilon,
         );
 
+        // Convert normed_residual (Vec<f32>) to Tensor
+        let normed_residual_tensor = Tensor::from_slice(&normed_residual);
+
         // Feed-forward network
-        let final_output = self
-            .feed_forward
-            .forward(&ModelTensor::new(&normed_residual))?;
+        let final_output_tensor = self.feed_forward.forward(Arc::new(normed_residual_tensor))?;
+
+        // Convert final_output (Tensor) to Vec<f32> for final residual connection
+        let final_output_vec: Vec<f32> = Vec::<f32>::try_from(final_output_tensor)?;
 
         // Residual connection after feed-forward
         let mut output = vec![0.0; dim];
         for i in 0..dim {
-            output[i] = residual_output[i] + final_output[i];
+            output[i] = residual_output[i] + final_output_vec[i];
         }
 
-        Ok(output)
+        // Convert final output (Vec<f32>) back to Tensor before returning
+        Ok(Tensor::from_slice(&output))
     }
 }
 
-fn load_tensor(st: &SafeTensors, name: &str) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
-    let tensor_view = st.tensor(name)?;
-    utils::from_tensor_view(tensor_view)
+pub fn load_tensor(st: &SafeTensors, name: &str) -> Result<Arc<Tensor>, Box<dyn Error + Send + Sync>> {
+    // Access the Ok(TensorView)
+    let tensor_view = match st.tensor(name) {
+        Err(e) => return Err(Box::new(e)),  // Box the SafeTensorError and propagate
+        Ok(tensor_view) => tensor_view,  // Unwrap TensorView
+    };
+
+    // Now pass the unwrapped TensorView into utils::from_tensor_view
+    let returned_tensor = match utils::from_tensor_view(tensor_view) {
+        Err(e) => return Err(e),  // Propagate the error from from_tensor_view
+        Ok(returned_tensor) => returned_tensor,  // Unwrap the Ok value to get the tch::Tensor
+    };
+
+    // Now you have `returned_tensor` as a `tch::Tensor`
+    Ok(Arc::new(returned_tensor))
 }
