@@ -1,21 +1,20 @@
-pub mod inference;
-
-pub mod loader;
-
-pub mod model {
-    pub mod files;
-    pub mod config;
-    pub mod model;
+pub mod transformers {
+    pub mod attention;
+    pub mod feed_forward;
+    pub mod rmsnorm;
+    pub mod transformer;
+    pub mod transformer_block;
 }
-
-pub mod quantize_tensors;
-
+pub mod inference;
+pub mod tokenizer {
+    pub mod custom_tokenizer;
+    pub mod hf_tokenizer;
+}
+pub mod config;
+pub mod loader;
+pub mod tensor;
 pub mod sampler;
-
-pub mod tokenizer;
-
-pub mod helpers;
-
+pub mod utils;
 pub mod testing {
     pub mod test_inference;
     pub mod test_loading;

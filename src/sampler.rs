@@ -1,6 +1,6 @@
+use crate::utils;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
-use crate::helpers;
 
 #[derive(Debug, Copy, Clone)]
 struct ProbIndex {
@@ -20,11 +20,16 @@ impl Sampler {
     pub fn new(vocab_size: u32, temperature: f32, top_p: f32, seed: u64) -> Self {
         Self {
             vocab_size,
-            probindex: vec![ProbIndex { prob: 0.0, index: 0 }; vocab_size as usize],
+            probindex: vec![
+                ProbIndex {
+                    prob: 0.0,
+                    index: 0
+                };
+                vocab_size as usize
+            ],
             temperature,
             top_p,
-            seed: ChaCha8Rng::seed_from_u64(seed)
-
+            seed: ChaCha8Rng::seed_from_u64(seed),
         }
     }
 
@@ -34,16 +39,16 @@ impl Sampler {
         }
 
         let mut working_logits = logits.to_vec();
-        
+
         if self.temperature == 0.0 {
             return self.sample_argmax(&working_logits);
         }
-        
+
         self.apply_temperature(&mut working_logits);
-        helpers::softmax(&mut working_logits);
-        
+        utils::softmax(&mut working_logits);
+
         let rand = self.get_random_float();
-        
+
         if self.top_p <= 0.0 || self.top_p >= 1.0 {
             self.sample_multinomial(&working_logits, rand)
         } else {
@@ -52,7 +57,8 @@ impl Sampler {
     }
 
     fn sample_argmax(&self, probabilities: &[f32]) -> u32 {
-        probabilities.iter()
+        probabilities
+            .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(index, _)| index as u32)
@@ -60,7 +66,8 @@ impl Sampler {
     }
 
     fn sample_multinomial(&self, probabilities: &[f32], rand: f32) -> u32 {
-        probabilities.iter()
+        probabilities
+            .iter()
             .scan(0.0, |sum, &p| {
                 *sum += p;
                 Some(*sum)
@@ -78,15 +85,19 @@ impl Sampler {
 
     fn prepare_top_p(&mut self, probabilities: &[f32]) {
         self.probindex.clear();
-        self.probindex.extend(probabilities.iter().enumerate().map(|(i, &p)| 
-            ProbIndex { prob: p, index: i as u32 }
-        ));
-        self.probindex.sort_unstable_by(|a, b| b.prob.partial_cmp(&a.prob).unwrap());
+        self.probindex
+            .extend(probabilities.iter().enumerate().map(|(i, &p)| ProbIndex {
+                prob: p,
+                index: i as u32,
+            }));
+        self.probindex
+            .sort_unstable_by(|a, b| b.prob.partial_cmp(&a.prob).unwrap());
     }
 
     fn find_top_p_cutoff(&self) -> usize {
         let mut cumulative_prob = 0.0;
-        self.probindex.iter()
+        self.probindex
+            .iter()
             .take_while(|pi| {
                 cumulative_prob += pi.prob;
                 cumulative_prob <= self.top_p

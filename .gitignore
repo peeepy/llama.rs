@@ -1,6 +1,6 @@
 /target
 Llama-3.2-1B
-
+libtorch-win-shared-with-deps-debug-2.4.0+cu124
 ./cargo.lock
 ./prettierrc.toml
 Llama-3.2-1B
