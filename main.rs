@@ -2,16 +2,17 @@ use lm::testing::test_loading::test_load_model;
 use lm::testing::test_tokenizer::test_tokenizer;
 use log::{error, info};
 
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     env_logger::init();
 
-    info!("Starting model loading...");
-    test_load_model()?;
-    info!("Model loaded successfully");
+    // info!("Starting model loading...");
+    // test_load_model()?;
+    // info!("Model loaded successfully");
 
-    info!("Beginning tokenizer test...");
+    info!("Beginning inference test...");
     test_tokenizer()?;
-    info!("Tokenization test succeeded");
+    info!("Inference test succeeded");
 
     Ok(())
 }

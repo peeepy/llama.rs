@@ -105,17 +105,27 @@ impl Sampler {
             .count()
     }
 
-    fn sample_from_top_p(&self, rand: f32, cutoff: usize) -> u32 {
-        let total_prob: f32 = self.probindex[..cutoff].iter().map(|pi| pi.prob).sum();
+    pub fn sample_from_top_p(&self, rand: f32, cutoff: usize) -> u32 {
+        if cutoff == 0 || self.probindex.is_empty() {
+            return 0; // Return a default value if cutoff is 0 or probindex is empty
+        }
+        
+        let safe_cutoff = cutoff.min(self.probindex.len());
+        let total_prob: f32 = self.probindex[..safe_cutoff].iter().map(|pi| pi.prob).sum();
+        
+        if total_prob <= 0.0 {
+            return self.probindex[0].index; // Return the most probable token if total_prob is not positive
+        }
+        
         let scaled_rand = rand * total_prob;
         let mut cumulative_prob = 0.0;
-        for pi in &self.probindex[..cutoff] {
+        for pi in &self.probindex[..safe_cutoff] {
             cumulative_prob += pi.prob;
             if scaled_rand < cumulative_prob {
                 return pi.index;
             }
         }
-        self.probindex[cutoff - 1].index
+        self.probindex[safe_cutoff - 1].index
     }
 
     fn apply_temperature(&self, logits: &mut [f32]) {

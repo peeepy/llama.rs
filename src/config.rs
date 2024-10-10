@@ -39,8 +39,21 @@ pub struct Config {
 
 impl Config {
     pub fn get_head_dim(&self) -> usize {
-        (self.hidden_size / self.num_attention_heads) as usize
+    // Ensure hidden_size is divisible by num_attention_heads
+    if self.num_attention_heads == 0 {
+        panic!("num_attention_heads must be greater than zero.");
     }
+    
+    let head_dim = self.hidden_size / self.num_attention_heads;
+
+    // Ensure head_dim is positive
+    if head_dim == 0 {
+        panic!("head_dim calculated as zero. Check hidden_size and num_attention_heads.");
+    }
+
+    head_dim as usize
+}
+
 
     pub fn load_config<P: AsRef<Path>>(
         dir: P,

@@ -10,13 +10,14 @@ safetensors = "0.4.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tch = { version = "0.17.0", features = ["download-libtorch"] }
+statrs = "0.17.1"
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11.5"
 bytemuck = "1.7"
 rayon = "1.5"
 half = "2.4.1"
-tokenizers = "0.20.0"
+tokenizers = "0.20.1"
 glob = "0.3"
 
 [[bin]]
@@ -25,5 +26,7 @@ path = "main.rs"
 
 [lib]
 path = "src/lib.rs"
+
+#![feature(f16)]
 
 

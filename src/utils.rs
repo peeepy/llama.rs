@@ -1,10 +1,11 @@
-use tch::{Tensor, Kind};
+use tch::{Device, Kind, Tensor};
 use std::error::Error;
 use safetensors::tensor::TensorView;
 use std::sync::Arc;
 use std::fs::File;
 use std::io::Read;
 use safetensors::SafeTensors;
+use statrs::function::erf::erf;
 
 
 // fn get_embeddings(&self, tokens: &[usize]) -> Vec<f32> {
@@ -17,6 +18,33 @@ use safetensors::SafeTensors;
 //         }
 //         embeddings
 // }
+
+pub fn precomputed_theta_pos_frequencies(head_dim: i64, seq_len: i32, device: &str, theta: f32) -> Tensor {
+    // As written in the paper, the dimentions o the embedding must be even
+    assert!(head_dim%2==0, "The head_dim must be even");
+    // Built the theta parameters
+    // According to the formula theta_i = 10000 ^ (-2(i-1)/dim) for i = [1,2,3,..dim/2]
+    // Shape: (head_dim / 2)
+    let theta_numerator: Tensor = Tensor::range(0, head_dim, (Kind::Float, Device::cuda_if_available()));
+    // Shape : (head_dim / 2)
+    let theta: &Tensor = 1.0 / (theta ** (theta_numerator / head_dim)).to(device);
+    // Construct the positions (the "m" parameter)
+    // shape: (seq_len)
+    // = torch.arange(seq_len, device=device)
+    // multiply each theta by each position using the outer product
+    // shape : (seq_len) outer_product * (head_dim / 2) -> (seq_len, head_dim / 2)
+    let freq: Tensor = Tensor::outer(m, theta).to(Kind::Float);
+    let freq_complex: Tensor = Tensor::polar(Tensor::ones_like(freq), freq);
+    // we can computer complex numbers in the polar form c = R * exp(i * m * theta), where R = 1 as follow
+    // shape: (seq_len, head_dim/2) -> (seq-len, head_dim/2)
+    return freq_complex
+}
+
+pub fn gelu(x: f32) -> f32 {
+    // Manually implement the GELU formula
+    let erf_part = erf(x as f64 / (2.0f64.sqrt())) as f32;
+    0.5 * x * (1.0 + erf_part)
+}
 
 pub fn from_tensor_view(view: TensorView) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
     let shape: Vec<i64> = view.shape().iter().map(|&x| x as i64).collect();
@@ -69,7 +97,7 @@ pub fn softmax(x: &mut [f32]){
     }
 }
 
-pub fn matmul(a: &Arc<Tensor>, b: &Arc<Tensor>) -> Result<Arc<Tensor>, Box<dyn Error>> {
+pub fn matmul(a: &Arc<Tensor>, b: &Arc<Tensor>) -> Result<Arc<Tensor>, Box<dyn Error + Sync + Send>> {
     if a.size()[1] != b.size()[0] {
         return Err("Invalid dimensions for matrix multiplication".into());
     }
@@ -120,8 +148,3 @@ pub fn list_tensors_in_safetensors(file_path: &str) -> Result<(), Box<dyn Error 
 
 //     Ok(Arc::new(result))
 // }
-
-pub fn gelu(x: f32) -> f32 {
-    // Approximation of GELU
-    0.5 * x * (1.0 + f32::tanh(f32::sqrt(2.0 / std::f32::consts::PI) * (x + 0.044715 * x.powi(3))))
-}

@@ -11,15 +11,6 @@ pub fn test_load_model() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("Model loaded successfully in {:?}", load_time);
     // You can add more detailed prints here if needed
     println!("Model config: {:?}", model.config);
-    // println!("Number of tensors: {}", model.tensors.len());
-
-    // Check tensor information
-    // for (tensor, _) in model.blocks {
-    //     println!(
-    //         "Tensor shape: {:?} - Quantization: {:?}",
-    //         tensor. tensor.quant_type
-    //     );
-    // }
 
     Ok(())
 }

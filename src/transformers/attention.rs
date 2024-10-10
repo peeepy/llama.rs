@@ -1,4 +1,3 @@
-use crate::utils::softmax;
 use std::error::Error;
 use tch::Tensor;
 use std::sync::Arc;
@@ -9,7 +8,9 @@ pub struct Attention {
     pub wv: Arc<Tensor>,
     pub wo: Arc<Tensor>,
     pub head_dim: usize,
-    pub num_heads: usize,
+    pub num_heads_q: usize,
+    pub num_heads_kv: usize,
+    pub n_rep: usize,
 }
 
 impl Attention {
@@ -19,76 +20,117 @@ impl Attention {
         wv: Arc<Tensor>,
         wo: Arc<Tensor>,
         head_dim: usize,
-        num_heads: usize,
+        num_heads_q: usize,
+        num_heads_kv: Option<usize>,
     ) -> Self {
+        let num_heads_kv = num_heads_kv.unwrap_or(num_heads_q);
+        let n_rep = num_heads_q / num_heads_kv;
+
+        assert_eq!(wq.size()[1], (head_dim * num_heads_q) as i64, "wq dimension mismatch");
+        assert_eq!(wk.size()[1], (head_dim * num_heads_kv) as i64, "wk dimension mismatch");
+        assert_eq!(wv.size()[1], (head_dim * num_heads_kv) as i64, "wv dimension mismatch");
+        assert_eq!(wo.size()[0], (head_dim * num_heads_q) as i64, "wo dimension mismatch");
+
         Attention {
             wq,
             wk,
             wv,
             wo,
             head_dim,
-            num_heads,
+            num_heads_q,
+            num_heads_kv,
+            n_rep,
         }
     }
 
     pub fn forward(
         &self,
         input: Arc<Tensor>,
-        key_cache: &mut Vec<f32>,
-        value_cache: &mut Vec<f32>,
-        seq_len: usize,
+        key_cache: &mut Tensor,
+        value_cache: &mut Tensor,
         pos: usize,
-    ) -> Result<Arc<Tensor>, Box<dyn Error>> {
+        freq_complex: &Tensor,
+    ) -> Result<Arc<Tensor>, Box<dyn Error + Sync + Send>> {
+        let batch_size = input.size()[0];
+        let seq_len = input.size()[1];
+        let head_dim = self.head_dim as i64;
+
         // Compute queries, keys, and values
-        let queries: Tensor = input.matmul(&self.wq);
-        let keys: Tensor = input.matmul(&self.wk);
-        let values: Tensor = input.matmul(&self.wv);
+        let queries = input.matmul(&self.wq.transpose(0, 1));
+        let keys = input.matmul(&self.wk.transpose(0, 1));
+        let values = input.matmul(&self.wv.transpose(0, 1));
 
-        // Convert tensors to Vec<f32> and store in the cache
-        let keys_vec: Vec<f32> = Vec::<f32>::try_from(keys)?;
-        let values_vec: Vec<f32> = Vec::<f32>::try_from(values)?;
+        // Reshape and transpose for multi-head attention
+        let queries = queries
+            .view([batch_size, seq_len, self.num_heads_q as i64, head_dim])
+            .transpose(1, 2);
+        let keys = keys
+            .view([batch_size, seq_len, self.num_heads_kv as i64, head_dim])
+            .transpose(1, 2);
+        let values = values
+            .view([batch_size, seq_len, self.num_heads_kv as i64, head_dim])
+            .transpose(1, 2);
 
-        // Ensure the vectors have the correct length
-        assert_eq!(keys_vec.len(), self.head_dim, "Keys vector has incorrect length");
-        assert_eq!(values_vec.len(), self.head_dim, "Values vector has incorrect length");
+        // Apply rotary embeddings
+        let queries = apply_rotary_embeddings(&queries, freq_complex);
+        let keys = apply_rotary_embeddings(&keys, freq_complex);
 
-        // Copy the vectors into the cache
-        key_cache[pos * self.head_dim..(pos + 1) * self.head_dim].copy_from_slice(&keys_vec);
-        value_cache[pos * self.head_dim..(pos + 1) * self.head_dim].copy_from_slice(&values_vec);
+        // Update key and value caches
+        key_cache.narrow(2, pos as i64, 1).copy_(&keys.select(2, -1).unsqueeze(2));
+        value_cache.narrow(2, pos as i64, 1).copy_(&values.select(2, -1).unsqueeze(2));
+
+        // Use cached keys and values up to current position
+        let keys = key_cache.narrow(2, 0, pos as i64 + 1);
+        let values = value_cache.narrow(2, 0, pos as i64 + 1);
+
+        // Repeat KV heads if necessary
+        let keys = repeat_kv(&keys, self.n_rep);
+        let values = repeat_kv(&values, self.n_rep);
 
         // Compute attention scores
-        let mut attention_scores: Vec<f32> = vec![0.0; seq_len];
-        for t in 0..seq_len {
-            let cache_keys: &[f32] = &key_cache[t * self.head_dim..(t + 1) * self.head_dim];
-            let mut score: f32 = 0.0;
-            for i in 0..self.head_dim {
-                // Convert the f64 from double_value to f32 before multiplication
-                score += (queries.double_value(&[i as i64]) as f32) * cache_keys[i];
-            }
-            score /= (self.head_dim as f32).sqrt();
-            attention_scores[t] = score;
-        }
+        let attention_scores = queries.matmul(&keys.transpose(-2, -1)) / (head_dim as f64).sqrt();
 
-        // Apply softmax to the attention scores
-        softmax(&mut attention_scores);
+        // Create and apply attention mask
+        let attention_mask = Tensor::ones(&[batch_size, 1, seq_len, seq_len], (tch::Kind::Float, input.device()));
+        let attention_mask = attention_mask.tril(0);
+        let masked_attention_scores = attention_scores.masked_fill(&attention_mask.eq(0), f64::NEG_INFINITY);
 
-        // Compute the weighted sum of values based on attention scores
-        let mut output: Vec<f32> = vec![0.0; self.head_dim];
-        for t in 0..seq_len {
-            let cache_values = &value_cache[t * self.head_dim..(t + 1) * self.head_dim];
-            let score: f32 = attention_scores[t];
-            for i in 0..self.head_dim {
-                output[i] += score * cache_values[i];
-            }
-        }
+        // Apply softmax
+        let attention_probs = masked_attention_scores.softmax(-1, tch::Kind::Float);
 
-        // Convert `output` from Vec<f32> to Tensor
-        let output_tensor: Tensor = Tensor::from_slice(&output);
+        // Compute weighted sum of values
+        let attention_output = attention_probs.matmul(&values);
 
-        // Apply output projection using matmul and handle Result
-        let final_output_tensor = output_tensor.matmul(&self.wo);
+        // Reshape attention output
+        let attention_output = attention_output
+            .transpose(1, 2)
+            .contiguous()
+            .view([batch_size, seq_len, (self.num_heads_q * self.head_dim) as i64]);
 
-        Ok(Arc::new(final_output_tensor))  // Wrap the result in Arc<Tensor>
+        // Final projection
+        let output = attention_output.matmul(&self.wo.transpose(0, 1));
+
+        Ok(Arc::new(output))
     }
+}
 
+fn apply_rotary_embeddings(x: &Tensor, freq_complex: &Tensor) -> Tensor {
+    // Implement rotary embeddings here
+    // This is a placeholder and needs to be implemented based on your specific requirements
+    let (batch_size, num_heads, seq_len, head_dim) = x.size4().unwrap();
+    let freq_complex = freq_complex.view([seq_len, head_dim / 2, 2]);
+    
+    let x_complex = x.view([batch_size, num_heads, seq_len, head_dim / 2, 2]);
+    let x_rotated = Tensor::einsum("bhld,lrd->bhlrd", &[x_complex, freq_complex], None::<i64>);
+    x_rotated.view([batch_size, num_heads, seq_len, head_dim])
+}
+
+fn repeat_kv(x: &Tensor, n_rep: usize) -> Tensor {
+    if n_rep == 1 {
+        return x.clone(x);
+    }
+    let (batch_size, num_kv_heads, seq_len, head_dim) = x.size4().unwrap();
+    x.unsqueeze(2)
+        .expand([batch_size, num_kv_heads, n_rep as i64, seq_len, head_dim], true)
+        .reshape([batch_size, num_kv_heads * n_rep as i64, seq_len, head_dim])
 }

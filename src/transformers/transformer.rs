@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::transformers::attention::Attention;
 use crate::transformers::feed_forward::FeedForward;
 use crate::transformers::transformer_block::{TransformerBlock, load_tensor};
-// use crate::utils::{load_config, load_tensors_from_safetensors};
 use safetensors::tensor::SafeTensors;
 use std::error::Error;
 use std::fs::File;
@@ -44,11 +43,13 @@ impl Transformer {
                 config.intermediate_size,         // intermediate_size (was hidden_dim)
             );
 
+            let norm1_weight = Tensor::ones(&[1, 1, config.hidden_size as i64], (tch::Kind::Float, tch::Device::Cpu));
+            let norm2_weight = Tensor::ones(&[1, 1, config.hidden_size as i64], (tch::Kind::Float, tch::Device::Cpu));
             let transformer_block = TransformerBlock::new(
                 attention,
                 feed_forward,
-                vec![1.0; config.hidden_size],  // norm1 weights (placeholder)
-                vec![1.0; config.hidden_size],  // norm2 weights (placeholder)
+                norm1_weight,  // norm1 weights (placeholder)
+                norm2_weight,  // norm2 weights (placeholder)
                 config.rms_norm_eps,            // epsilon value for RMSNorm
             );
 
@@ -61,7 +62,6 @@ impl Transformer {
             blocks,
         }
     }
-
 
     pub fn load_from_directory<P: AsRef<std::path::Path>>(
         dir: P,
@@ -84,7 +84,8 @@ impl Transformer {
         let safetensors = SafeTensors::deserialize(&buffer)?;
 
         // Load the token embedding table
-        let token_embedding_table = load_tensor(&safetensors, "model.embed_tokens.weight")?;
+        let token_embedding_table = load_tensor(&safetensors, "model.embed_tokens.weight")?
+        .to_kind(tch::Kind::Float).into();  // Ensure it's float
 
         // Load transformer blocks
         let mut blocks = Vec::with_capacity(config.num_hidden_layers);
@@ -100,76 +101,60 @@ impl Transformer {
         })
     }
 
-    // ERROR:  expected struct `Vec<f32>`
-    // found enum `QuantState`
-    // Need to look at Tensor and possibly refactor fields
-    pub fn forward(
+pub fn forward(
     &mut self,
     input: &Tensor,
-    key_cache: &mut Vec<f32>,
-    value_cache: &mut Vec<f32>,
-    seq_len: usize,
+    key_cache: &mut Tensor,
+    value_cache: &mut Tensor,
     pos: usize,
-) -> Tensor {
+) -> Result<Tensor, Box<dyn Error + Sync + Send>> {
+    // Debugging: Print input tensor shape
+    println!("Model forward input shape: {:?}", input.size());
+    // assert_eq!(input.size()[1], self.config.max_position_embeddings as i64, "Input sequence length doesn't match max_position_embeddings");
+
     // Shallow clone the input tensor so we can modify it in-place
     let mut output = input.shallow_clone();
 
     // Iterate over transformer blocks and update the output tensor
-    for block in &mut self.blocks {
-        output = block
-            .forward(
-                &output,        // Pass the output Tensor from the previous block
-                key_cache,      // Mutable key cache reference
-                value_cache,    // Mutable value cache reference
-                seq_len,
-                pos,
-            )
-            .unwrap();        // Unwrap the Result to get the Tensor output
+    for (i, block) in self.blocks.iter_mut().enumerate() {
+        // Debugging: Print which block is being processed
+        println!("Processing Transformer block: {}", i);
+
+        match block.forward(&output, key_cache, value_cache,  pos) {
+            Ok(new_output) => {
+                output = new_output;
+                println!("Transformer output shape after block {}: {:?}", i, output.size());
+            },
+            Err(e) => {
+                println!("Error in block {}: {:?}", i, e);
+                return Err(e as Box<dyn Error + Sync + Send>);  // Return the error with Sync + Send
+            }
+        }
     }
 
-    output // Return the final output tensor
+    // Return the final output tensor if all blocks succeed
+    Ok(output)
 }
 
+   pub fn get_embeddings(&self, tokens: &[usize]) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>> {
+        // Create a vector to hold the embeddings
+        let mut embeddings = vec![0.0; tokens.len() * self.config.hidden_size];
+
+        // Iterate through tokens and extract their corresponding embeddings
+        for (i, &token) in tokens.iter().enumerate() {
+            // Extract the embedding for the token from the embedding table using `.narrow()`
+            let embedding = self.token_embedding_table.get(token as i64);
+            
+            // Ensure embedding has the correct shape
+            assert_eq!(embedding.size()[0] as usize, self.config.hidden_size, "Embedding size mismatch");
+
+            // Copy embedding into the output `embeddings` vector
+            embedding.copy_data(
+                &mut embeddings[i * self.config.hidden_size..(i + 1) * self.config.hidden_size], 
+                self.config.hidden_size
+            );
+        }
+
+        Ok(embeddings) // Return the embeddings
+    }
 }
-
-// NOTE: probably won't put it here. unnecessary abstraction?
-//     pub fn generate(
-//     &mut self,
-//     tokenizer: &Tokenizer,
-//     sampler: &Sampler,
-//     prompt: &str,
-//     max_length: usize,
-// ) -> Result<String, Box<dyn Error>> {
-//     // Tokenize the prompt
-//     let mut input_ids = tokenizer.tokenize(prompt);
-
-//     // Initialize key and value caches
-//     let mut key_cache = vec![0.0; self.config.n_layers * self.config.seq_len * self.config.hidden_dim];
-//     let mut value_cache = vec![0.0; self.config.n_layers * self.config.seq_len * self.config.hidden_dim];
-
-//     // Start generating tokens
-//     for pos in 0..max_length {
-//         // Create input tensor from token IDs
-//         let input_tensor = Tensor::new(&input_ids);
-
-//         // Forward pass through the transformer to get logits
-//         let logits = self.forward(&input_tensor, &mut key_cache, &mut value_cache, self.config.seq_len, pos);
-
-//         // Use the sampler to pick the next token based on logits
-//         let next_token_id = sampler.sample(&mut logits);
-
-//         // Stop if we hit the end of sequence token
-//         if next_token_id == tokenizer.eos_token_id() {
-//             break;
-//         }
-
-//         // Append the new token to the input
-//         input_ids.push(next_token_id);
-//     }
-
-//     // Detokenize the final sequence of token IDs to generate the text
-//     let output_text = tokenizer.detokenize(&input_ids);
-
-//     Ok(output_text)
-// }
-// }
